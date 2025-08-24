@@ -2,6 +2,21 @@
 
 Welcome to the official Eternum Command Line Wallet, built in Swift.
 
+# 🛡 Eternum CLI Wallet  
+
+A pure command-line tool for Merkle ledger management in the biological blockchain.  
+Every command reflects the project’s core values: healing, unconditional love, kindness, peace, and a better world.  
+
+👉 Quick reference: see [COMMANDS.md](COMMANDS.md)
+
+---
+
+## 🚀 Usage  
+
+```bash
+swift run swiftcliwallet <command>
+
+
 This tool allows you to:
 - Generate secure wallets and sign sigils
 - Log wallet generation rituals with timestamped metadata
@@ -23,6 +38,9 @@ The `SigilMemory.sol` contract is designed to register the following:
 📜 Deploy Script: `script/Deploy.s.sol`
 
 > This smart contract is ready for Base Layer 2 deployment. Deployment is paused until funding is received.
+
+
+
 
 ---
 
