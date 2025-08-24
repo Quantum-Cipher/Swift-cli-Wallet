@@ -1,0 +1,3 @@
+[submodule "EternumSentinel"]
+	path = EternumSentinel
+	url = git@github.com:Quantum-Cipher/apple-automation-ledger.git
