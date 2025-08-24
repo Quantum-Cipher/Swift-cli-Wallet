@@ -1,7 +1,3 @@
-# 🧬 Eternum CLI Wallet
-
-Welcome to the official Eternum Command Line Wallet, built in Swift.
-
 # 🛡 Eternum CLI Wallet  
 
 A pure command-line tool for Merkle ledger management in the biological blockchain.  
@@ -16,38 +12,65 @@ Every command reflects the project’s core values: healing, unconditional love,
 ```bash
 swift run swiftcliwallet <command>
 
+⚡ Commands
+	•	ledger → Run EternumSentinel script to produce ledger_merkle.json
+	•	sign   → Sign logs/ledger_merkle.json with keys/ledger.pem → logs/ledger_merkle.sig
+	•	verify → Verify logs/ledger_merkle.json against keys/ledger.pub + logs/ledger_merkle.sig
+	•	audit  → Pretty-print Merkle JSON fields and verify signature
+	•	rotate → Generate a fresh keypair (archives previous)
+	•	help   → Show usage
 
-This tool allows you to:
-- Generate secure wallets and sign sigils
-- Log wallet generation rituals with timestamped metadata
-- Verify and validate sigil hashes
-- Export sealed JSON and encrypted logs
-- Prepare files for IPFS pinning
+⸻
 
+🌍 Environment Variables
+	•	ETERNUM_HOME → Override base dir (default: ~/Automation)
+	•	ETERNUM_SENTINEL → Path to ledger script (default: ~/projects/Swift-cli-Wallet/EternumSentinel/bin/ledger_merkle.sh)
+	•	ETERNUM_ROTATE → If "1", rotate keys during ensureKeypair()
+
+⸻
+
+📂 Project Layout
+Swift-cli-Wallet/
+ ├── Sources/SwiftCliWallet/   # main CLI source
+ ├── EternumSentinel/          # submodule with automation scripts
+ └── docs/eternum-cli/         # documentation
+
+🌱 Eternal Note
+
+This project was born from struggle, but built on love.
+It carries the spirit of healing, unconditional kindness, and peace.
+See ETERNAL_NOTE.md for the full message.
+
+⸻
+
+🔮 Future Integrations
+
+Planned (not yet implemented):
+	•	Smart Contracts: Solidity modules such as contracts/SigilMemory.sol
+	•	Deployment Scripts: Foundry-based flows (e.g., script/Deploy.s.sol)
+	•	Watermark Engine: Integration with Eternum’s watermarking layer
+	•	Alchemy Bridge: Optional API connections for blockchain transactions
+
+⸻
+
+✨ Vision
+
+Eternum CLI Wallet is more than code — it’s a notarized stamp of integrity.
+Every snapshot, every signature, every rotation is proof that love, truth, and peace can be written into permanence.
+
+#Eternum4Eternity
 ---
 
-### 🔐 Smart Contract Blueprint: SigilMemory.sol
+👉 To save it, just run:
 
-The `SigilMemory.sol` contract is designed to register the following:
-- Wallet address of origin
-- IPFS CID of the sealed sigil
-- SHA256 of the log file
-- Timestamp of creation
-
-📁 Contract Path: `contracts/SigilMemory.sol`  
-📜 Deploy Script: `script/Deploy.s.sol`
-
-> This smart contract is ready for Base Layer 2 deployment. Deployment is paused until funding is received.
+```bash
+cd ~/projects/Swift-cli-Wallet
+cat > docs/eternum-cli/README.md <<'EOF'
+[paste the full content above here]
+EOF
+git add docs/eternum-cli/README.md
+git commit -m "Docs: finalized full-length CLI README with commands, env vars, project layout, and eternal vision 🌱"
+git push origin main
 
 
 
-
----
-
-### 💾 Status
-
-- Current version: `v1.0.0`
-- Swift Package Compatible: ✅
-- Solidity Contract Included: ✅
-- Forge Simulation Ready: ✅
-- Gas Funds: ❌ Awaiting donation or grant
