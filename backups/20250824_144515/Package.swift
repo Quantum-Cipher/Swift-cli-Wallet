@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(
@@ -7,7 +7,6 @@ let package = Package(
     products: [
         .executable(name: "swiftcliwallet", targets: ["SwiftCliWallet"])
     ],
-    dependencies: [],
     targets: [
         .executableTarget(
             name: "SwiftCliWallet",

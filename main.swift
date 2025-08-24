@@ -17,7 +17,6 @@ enum Config {
     static var publicKey: URL { keysDir.appendingPathComponent("ledger.pub") }
     static var privateKey: URL { keysDir.appendingPathComponent("ledger.pem") }
 
-    /// Path to ledger script; override with $ETERNUM_SENTINEL
     static var sentinelScript: URL? {
         if let env = ProcessInfo.processInfo.environment["ETERNUM_SENTINEL"], !env.isEmpty {
             let path = (env as NSString).expandingTildeInPath
@@ -81,53 +80,38 @@ func runShell(_ script: URL) throws -> (status: Int32, out: String, err: String)
     p.standardError = errPipe
     try p.run()
     p.waitUntilExit()
-    let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     return (p.terminationStatus, out, err)
 }
 
 // MARK: - Signer/Verifier
 struct MerkleSigner {
-    /// Hardened: strict perms + optional rotation via ETERNUM_ROTATE=1
     static func ensureKeypair() throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: Config.keysDir, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
-
-        let needRotate = ProcessInfo.processInfo.environment["ETERNUM_ROTATE"] == "1"
-        if needRotate, fm.fileExists(atPath: Config.privateKey.path) || fm.fileExists(atPath: Config.publicKey.path) {
-            let ts = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-            let archiveDir = Config.keysDir.appendingPathComponent("archive-\(ts)")
-            try fm.createDirectory(at: archiveDir, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
-            if fm.fileExists(atPath: Config.privateKey.path) {
-                try fm.moveItem(at: Config.privateKey, to: archiveDir.appendingPathComponent("ledger.pem"))
-            }
-            if fm.fileExists(atPath: Config.publicKey.path) {
-                try fm.moveItem(at: Config.publicKey, to: archiveDir.appendingPathComponent("ledger.pub"))
-            }
-            print("🔁 Rotated old keypair → \(archiveDir.path)")
-        }
-
-        if fm.fileExists(atPath: Config.privateKey.path), fm.fileExists(atPath: Config.publicKey.path), !needRotate {
+        if fm.fileExists(atPath: Config.privateKey.path),
+           fm.fileExists(atPath: Config.publicKey.path) {
             return
         }
 
         let priv = P256.Signing.PrivateKey()
         let pub = priv.publicKey
+        try fm.createDirectory(at: Config.keysDir, withIntermediateDirectories: true)
+
         let privPEM = """
 -----BEGIN PRIVATE KEY-----
 \(priv.derRepresentation.base64EncodedString(options: [.lineLength64Characters]))
 -----END PRIVATE KEY-----
 """
+        try privPEM.write(to: Config.privateKey, atomically: true, encoding: .utf8)
+
         let pubPEM = """
 -----BEGIN PUBLIC KEY-----
 \(pub.derRepresentation.base64EncodedString(options: [.lineLength64Characters]))
 -----END PUBLIC KEY-----
 """
-        try privPEM.write(to: Config.privateKey, atomically: true, encoding: .utf8)
         try pubPEM.write(to: Config.publicKey, atomically: true, encoding: .utf8)
-        try fm.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: Config.privateKey.path)
-        try fm.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: Config.publicKey.path)
-        print(needRotate ? "🔑 Generated new rotated keypair" : "🔑 Generated keypair → \(Config.keysDir.path)")
+        print("🔑 Generated new keypair → \(Config.keysDir.path)")
     }
 
     static func sign() throws {
@@ -137,9 +121,6 @@ struct MerkleSigner {
         }
         let jsonData = try Data(contentsOf: Config.merkleJSON)
         let pem = try String(contentsOf: Config.privateKey)
-        guard pem.contains("BEGIN PRIVATE KEY"), pem.contains("END PRIVATE KEY") else {
-            throw SignerError.invalidPEM
-        }
         let keyB64 = pem.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.contains("BEGIN") && !$0.contains("END") && !$0.isEmpty }
@@ -147,8 +128,7 @@ struct MerkleSigner {
         guard let keyDER = Data(base64Encoded: keyB64) else { throw SignerError.invalidPEM }
         let priv = try P256.Signing.PrivateKey(derRepresentation: keyDER)
         let sig = try priv.signature(for: jsonData)
-        let fm = FileManager.default
-        try fm.createDirectory(at: Config.logsDir, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
+        try fm.createDirectory(at: Config.logsDir, withIntermediateDirectories: true)
         try sig.derRepresentation.write(to: Config.signature)
         print("✍️ Wrote signature → \(Config.signature.path)")
     }
@@ -156,22 +136,9 @@ struct MerkleSigner {
 
 struct MerkleVerifier {
     static func verify() throws {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: Config.merkleJSON.path) else {
-            throw MerkleVerificationError.missingFiles(Config.merkleJSON.path)
-        }
-        guard fm.fileExists(atPath: Config.signature.path) else {
-            throw MerkleVerificationError.missingFiles(Config.signature.path)
-        }
-        guard fm.fileExists(atPath: Config.publicKey.path) else {
-            throw MerkleVerificationError.missingFiles(Config.publicKey.path)
-        }
         let json = try Data(contentsOf: Config.merkleJSON)
         let sig = try Data(contentsOf: Config.signature)
         let pubPEM = try String(contentsOf: Config.publicKey)
-        guard pubPEM.contains("BEGIN PUBLIC KEY"), pubPEM.contains("END PUBLIC KEY") else {
-            throw MerkleVerificationError.invalidPEM
-        }
         let keyB64 = pubPEM.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.contains("BEGIN") && !$0.contains("END") && !$0.isEmpty }
@@ -185,23 +152,21 @@ struct MerkleVerifier {
 }
 
 // MARK: - Commands
-enum Command: String { case ledger, sign, verify, audit, rotate, help }
+enum Command: String { case ledger, sign, verify, audit, help }
 
-func usage() {
+func usage(_ executable: String) {
     print("""
-Usage: swift run swiftcliwallet <command>
+Usage: \(executable) <command>
 
-  ledger    Run EternumSentinel ledger script to produce ledger_merkle.json
+  ledger    Run EternumSentinel script to produce ledger_merkle.json
   sign      Sign logs/ledger_merkle.json with keys/ledger.pem → logs/ledger_merkle.sig
   verify    Verify logs/ledger_merkle.json against keys/ledger.pub and logs/ledger_merkle.sig
-  audit     Pretty-print merkle JSON fields if present and verify signature
-  rotate    Generate a fresh keypair (archives previous)
+  audit     Pretty-print merkle JSON fields and verify signature
   help      Show this help
 
 Env:
   ETERNUM_HOME      Override base dir (default: ~/Automation)
   ETERNUM_SENTINEL  Path to ledger script (default: ~/projects/Swift-cli-Wallet/EternumSentinel/bin/ledger_merkle.sh)
-  ETERNUM_ROTATE    If "1", rotate keys during ensureKeypair()
 """)
 }
 
@@ -210,7 +175,7 @@ func cmd_ledger() {
         guard let script = Config.sentinelScript else { throw ShellError.scriptNotFound("ETERNUM_SENTINEL") }
         let (status, out, err) = try runShell(script)
         if status != 0 { throw ShellError.executionFailed(status, err) }
-        if !out.isEmpty { print(out) }
+        if !out.isEmpty { print(out.trimmingCharacters(in: .whitespacesAndNewlines)) }
     } catch {
         fputs("ledger error: \(error)\n", stderr)
         exit(1)
@@ -230,33 +195,22 @@ func cmd_verify() {
 }
 func cmd_audit() {
     do {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: Config.merkleJSON.path) else { print("No Merkle JSON at \(Config.merkleJSON.path). Run 'ledger' first."); return }
+        guard FileManager.default.fileExists(atPath: Config.merkleJSON.path) else {
+            print("No Merkle JSON found. Run 'ledger' first.")
+            return
+        }
         let data = try Data(contentsOf: Config.merkleJSON)
         let m = try JSONDecoder().decode(MerkleRoot.self, from: data)
-        print("""
-🛡 Eternum Audit
-merkle_root: \(m.merkle_root)
-algo:        \(m.algo)
-timestamp:   \(m.timestamp)
-host:        \(m.host)
-""")
+        print("🛡 Eternum Audit")
+        print("merkle_root: \(m.merkle_root)")
+        print("algo: \(m.algo)")
+        print("timestamp: \(m.timestamp)")
+        print("host: \(m.host)")
         do { try MerkleVerifier.verify() } catch {
             print("Signature verification failed: \(error)")
         }
     } catch {
         fputs("audit error: \(error)\n", stderr)
-        exit(1)
-    }
-}
-func cmd_rotate() {
-    do {
-        setenv("ETERNUM_ROTATE", "1", 1)
-        try MerkleSigner.ensureKeypair()
-        unsetenv("ETERNUM_ROTATE")
-        print("♻️ Rotated keys")
-    } catch {
-        fputs("rotate error: \(error)\n", stderr)
         exit(1)
     }
 }
@@ -266,14 +220,17 @@ func cmd_rotate() {
 struct WalletCLI {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard let first = args.first, let cmd = Command(rawValue: first.lowercased()) else { usage(); exit(0) }
+        let executable = CommandLine.arguments[0].components(separatedBy: "/").last ?? "swiftcliwallet"
+        guard let first = args.first, let cmd = Command(rawValue: first.lowercased()) else {
+            usage(executable)
+            exit(0)
+        }
         switch cmd {
         case .ledger: cmd_ledger()
         case .sign: cmd_sign()
         case .verify: cmd_verify()
         case .audit: cmd_audit()
-        case .rotate: cmd_rotate()
-        case .help: usage()
+        case .help: usage(executable)
         }
     }
 }

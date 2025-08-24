@@ -1,0 +1,7 @@
+#!/bin/bash
+case "$1" in
+  scan)    ~/Automation/bin/full_cleanup.sh ;;
+  ledger)  ~/Automation/bin/ledger_merkle.sh && ~/Automation/bin/ledger_sign.sh ;;
+  anchor)  ~/Automation/bin/ledger_anchor_ots.sh ;;
+  *) echo "EternumSentinel: usage: {scan|ledger|anchor}";;
+esac

@@ -195,7 +195,7 @@ Usage: swift run swiftcliwallet <command>
   sign      Sign logs/ledger_merkle.json with keys/ledger.pem → logs/ledger_merkle.sig
   verify    Verify logs/ledger_merkle.json against keys/ledger.pub and logs/ledger_merkle.sig
   audit     Pretty-print merkle JSON fields if present and verify signature
-  rotate    Generate a fresh keypair (archives previous)
+  rotate    Generate a fresh keypair (archives previous if ETERNUM_ROTATE=1)
   help      Show this help
 
 Env:
@@ -251,9 +251,8 @@ host:        \(m.host)
 }
 func cmd_rotate() {
     do {
-        setenv("ETERNUM_ROTATE", "1", 1)
+        ProcessInfo.processInfo.environment["ETERNUM_ROTATE"] = "1"
         try MerkleSigner.ensureKeypair()
-        unsetenv("ETERNUM_ROTATE")
         print("♻️ Rotated keys")
     } catch {
         fputs("rotate error: \(error)\n", stderr)

@@ -8,8 +8,8 @@ swift run swiftcliwallet <ledger|sign|verify|audit|rotate|help>
 ledger  Run EternumSentinel script to produce ledger_merkle.json
 sign    Sign logs/ledger_merkle.json with keys/ledger.pem → logs/ledger_merkle.sig
 verify  Verify logs/ledger_merkle.json against keys/ledger.pub and logs/ledger_merkle.sig
-audit   Pretty-print merkle JSON fields and verify signature
-rotate  Generate a fresh keypair (archives previous)
+audit   Pretty-print merkle JSON fields if present and verify signature
+rotate  Generate a fresh keypair (archives previous if ETERNUM_ROTATE=1)
 help    Show this help
 
 ## Env

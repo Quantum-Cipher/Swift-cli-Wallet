@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+# Logs and caches
+Automation/logs/
+logs/
+*.log
+# Build
+.build/
+DerivedData/
+Automation/logs/
+Automation/keys/
+*.log

@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+
+# Run sub‑rituals
+~/Automation/bin/dedupe_files.sh
+~/Automation/bin/merge_similar.sh
+~/Automation/bin/organize_files.sh
+~/Automation/bin/notify_signals.sh
+
+# --- Audit Summary ---
+echo ""
+echo -e "\033[1;36m=================== CLEANUP AUDIT SUMMARY ===================\033[0m"
+
+# Count moved files
+moved_count=$(grep -c "Moved:" ~/Automation/logs/organize_files.log 2>/dev/null || echo 0)
+echo -e "\033[1;32mFiles Organized:\033[0m     $moved_count"
+
+# Count duplicates
+dup_count=$(grep -c "Duplicate:" ~/Automation/logs/dedupe_files.log 2>/dev/null || echo 0)
+echo -e "\033[1;33mDuplicates Removed:\033[0m $dup_count"
+
+# Count merges
+merge_count=$(grep -c "Merging:" ~/Automation/logs/merge_similar.log 2>/dev/null || echo 0)
+echo -e "\033[1;35mFiles Merged:\033[0m        $merge_count"
+
+# Quarantine items
+quarantine_count=$(find ~/Automation/Queues/Quarantine -type f 2>/dev/null | wc -l | tr -d ' ')
+echo -e "\033[1;31mQuarantined Files:\033[0m   $quarantine_count"
+
+# Unsigned apps flagged
+unsigned_count=$(grep -c "Unsigned apps:" ~/Automation/logs/notify_signals.log 2>/dev/null || echo 0)
+echo -e "\033[1;34mUnsigned Apps:\033[0m       $unsigned_count"
+
+echo -e "\033[1;36m==============================================================\033[0m"
+echo "Logs are in ~/Automation/logs/"
+echo ""
