@@ -108,21 +108,20 @@ struct MerkleSigner {
         }
 
         if fm.fileExists(atPath: Config.privateKey.path), fm.fileExists(atPath: Config.publicKey.path), !needRotate {
+            // Verify existing keys are valid before returning
+            let pem = try String(contentsOf: Config.privateKey)
+            let pubPEM = try String(contentsOf: Config.publicKey)
+            guard pem.contains("BEGIN PRIVATE KEY"), pem.contains("END PRIVATE KEY"),
+                  pubPEM.contains("BEGIN PUBLIC KEY"), pubPEM.contains("END PUBLIC KEY") else {
+                throw SignerError.invalidPEM
+            }
             return
         }
 
         let priv = P256.Signing.PrivateKey()
         let pub = priv.publicKey
-        let privPEM = """
------BEGIN PRIVATE KEY-----
-\(priv.derRepresentation.base64EncodedString(options: [.lineLength64Characters]))
------END PRIVATE KEY-----
-"""
-        let pubPEM = """
------BEGIN PUBLIC KEY-----
-\(pub.derRepresentation.base64EncodedString(options: [.lineLength64Characters]))
------END PUBLIC KEY-----
-"""
+        let privPEM = priv.pemRepresentation
+        let pubPEM = pub.pemRepresentation
         try privPEM.write(to: Config.privateKey, atomically: true, encoding: .utf8)
         try pubPEM.write(to: Config.publicKey, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: Config.privateKey.path)
@@ -134,6 +133,9 @@ struct MerkleSigner {
         try ensureKeypair()
         guard FileManager.default.fileExists(atPath: Config.merkleJSON.path) else {
             throw SignerError.missingFile(Config.merkleJSON.path)
+        }
+        guard FileManager.default.fileExists(atPath: Config.privateKey.path) else {
+            throw SignerError.missingFile(Config.privateKey.path)
         }
         let jsonData = try Data(contentsOf: Config.merkleJSON)
         let pem = try String(contentsOf: Config.privateKey)
