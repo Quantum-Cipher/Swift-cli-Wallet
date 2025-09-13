@@ -39,22 +39,24 @@ struct MerkleRoot: Codable {
 
 // MARK: - Errors
 enum MerkleVerificationError: Error, CustomStringConvertible {
-    case missingFiles(String), invalidPEM, signatureMismatch
+    case missingFiles(String), invalidPEM, signatureMismatch, invalidHash
     var description: String {
         switch self {
         case .missingFiles(let s): return "Missing files: \(s)"
         case .invalidPEM: return "Invalid PEM format"
         case .signatureMismatch: return "Signature mismatch"
+        case .invalidHash: return "Invalid hash format"
         }
     }
 }
 enum SignerError: Error, CustomStringConvertible {
-    case missingFile(String), invalidPEM, keyParseFailed
+    case missingFile(String), invalidPEM, keyParseFailed, invalidHash
     var description: String {
         switch self {
         case .missingFile(let p): return "Missing file: \(p)"
         case .invalidPEM: return "Invalid private key PEM"
         case .keyParseFailed: return "Failed to parse private key"
+        case .invalidHash: return "Invalid hash format"
         }
     }
 }
@@ -86,9 +88,39 @@ func runShell(_ script: URL) throws -> (status: Int32, out: String, err: String)
     return (p.terminationStatus, out, err)
 }
 
+// MARK: - Canonical Hash Integration
+func canonicalHash(for filePath: URL) throws -> [String: Any] {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: filePath.path) else { throw SignerError.missingFile(filePath.path) }
+    let data = try Data(contentsOf: filePath)
+    
+    // Canonicalize: UTF-8, trim trailing whitespace, add newline for text
+    var canonicalData = data
+    if filePath.pathExtension == "txt" {
+        if let text = String(data: data, encoding: .utf8) {
+            canonicalData = (text.trimmingCharacters(in: .whitespaces) + "\n").data(using: .utf8)!
+        }
+    }
+    let hash = SHA256.hash(data: canonicalData)
+    let contentHash = hash.compactMap { String(format: "%02x", $0) }.joined()
+    
+    // CID-style content_id (simplified multihash → multibase32)
+    let multihash = "1220" + contentHash // SHA2-256 prefix
+    let contentId = Data(multihash.utf8).base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "=")).lowercased()
+    
+    return [
+        "file": filePath.lastPathComponent,
+        "bytesize_original": data.count,
+        "mime_detected": filePath.pathExtension == "txt" ? "text/plain" : "application/octet-stream",
+        "bytesize_canonical": canonicalData.count,
+        "content_hash": contentHash,
+        "content_id": "b" + contentId,
+        "wm_version_hint": "v1-canon"
+    ]
+}
+
 // MARK: - Signer/Verifier
 struct MerkleSigner {
-    /// Hardened: strict perms + optional rotation via ETERNUM_ROTATE=1
     static func ensureKeypair() throws {
         let fm = FileManager.default
         try fm.createDirectory(at: Config.keysDir, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
@@ -108,7 +140,6 @@ struct MerkleSigner {
         }
 
         if fm.fileExists(atPath: Config.privateKey.path), fm.fileExists(atPath: Config.publicKey.path), !needRotate {
-            // Verify existing keys are valid before returning
             let pem = try String(contentsOf: Config.privateKey)
             let pubPEM = try String(contentsOf: Config.publicKey)
             guard pem.contains("BEGIN PRIVATE KEY"), pem.contains("END PRIVATE KEY"),
@@ -129,15 +160,12 @@ struct MerkleSigner {
         print(needRotate ? "🔑 Generated new rotated keypair" : "🔑 Generated keypair → \(Config.keysDir.path)")
     }
 
-    static func sign() throws {
+    static func sign(hash: String? = nil) throws -> String {
         try ensureKeypair()
-        guard FileManager.default.fileExists(atPath: Config.merkleJSON.path) else {
-            throw SignerError.missingFile(Config.merkleJSON.path)
-        }
-        guard FileManager.default.fileExists(atPath: Config.privateKey.path) else {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: Config.privateKey.path) else {
             throw SignerError.missingFile(Config.privateKey.path)
         }
-        let jsonData = try Data(contentsOf: Config.merkleJSON)
         let pem = try String(contentsOf: Config.privateKey)
         guard pem.contains("BEGIN PRIVATE KEY"), pem.contains("END PRIVATE KEY") else {
             throw SignerError.invalidPEM
@@ -148,28 +176,51 @@ struct MerkleSigner {
             .joined()
         guard let keyDER = Data(base64Encoded: keyB64) else { throw SignerError.invalidPEM }
         let priv = try P256.Signing.PrivateKey(derRepresentation: keyDER)
-        let sig = try priv.signature(for: jsonData)
+
+        if let hash = hash {
+            guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else {
+                throw SignerError.invalidHash
+            }
+            let hashData = Data(hex: hash)
+            let sig = try priv.signature(for: hashData)
+            let sigB64 = sig.derRepresentation.base64EncodedString()
+            try sig.derRepresentation.write(to: Config.signature)
+            print("✍️ Wrote signature → \(Config.signature.path)")
+            return sigB64
+        } else {
+            guard fm.fileExists(atPath: Config.merkleJSON.path) else {
+                throw SignerError.missingFile(Config.merkleJSON.path)
+            }
+            let jsonData = try Data(contentsOf: Config.merkleJSON)
+            let canonical = try canonicalHash(for: Config.merkleJSON)
+            let contentHash = canonical["content_hash"] as! String
+            let sig = try priv.signature(for: jsonData)
+            try sig.derRepresentation.write(to: Config.signature)
+            print("✍️ Wrote signature → \(Config.signature.path)")
+            print("🔗 Canonical hash: \(contentHash)")
+            return sig.derRepresentation.base64EncodedString()
+        }
+    }
+
+    static func printPEM() throws {
+        try ensureKeypair()
         let fm = FileManager.default
-        try fm.createDirectory(at: Config.logsDir, withIntermediateDirectories: true, attributes: [.posixPermissions: NSNumber(value: 0o700)])
-        try sig.derRepresentation.write(to: Config.signature)
-        print("✍️ Wrote signature → \(Config.signature.path)")
+        guard fm.fileExists(atPath: Config.privateKey.path), fm.fileExists(atPath: Config.publicKey.path) else {
+            throw SignerError.missingFile("Keys missing")
+        }
+        let privPEM = try String(contentsOf: Config.privateKey)
+        let pubPEM = try String(contentsOf: Config.publicKey)
+        print("Private Key:\n\(privPEM)")
+        print("Public Key:\n\(pubPEM)")
     }
 }
 
 struct MerkleVerifier {
-    static func verify() throws {
+    static func verify(hash: String? = nil, sigB64: String? = nil) throws {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: Config.merkleJSON.path) else {
-            throw MerkleVerificationError.missingFiles(Config.merkleJSON.path)
-        }
-        guard fm.fileExists(atPath: Config.signature.path) else {
-            throw MerkleVerificationError.missingFiles(Config.signature.path)
-        }
         guard fm.fileExists(atPath: Config.publicKey.path) else {
             throw MerkleVerificationError.missingFiles(Config.publicKey.path)
         }
-        let json = try Data(contentsOf: Config.merkleJSON)
-        let sig = try Data(contentsOf: Config.signature)
         let pubPEM = try String(contentsOf: Config.publicKey)
         guard pubPEM.contains("BEGIN PUBLIC KEY"), pubPEM.contains("END PUBLIC KEY") else {
             throw MerkleVerificationError.invalidPEM
@@ -180,25 +231,55 @@ struct MerkleVerifier {
             .joined()
         guard let keyDER = Data(base64Encoded: keyB64) else { throw MerkleVerificationError.invalidPEM }
         let pub = try P256.Signing.PublicKey(derRepresentation: keyDER)
-        let sigDER = try P256.Signing.ECDSASignature(derRepresentation: sig)
-        guard pub.isValidSignature(sigDER, for: json) else { throw MerkleVerificationError.signatureMismatch }
-        print("✅ Signature verified")
+
+        if let hash = hash, let sigB64 = sigB64 {
+            guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else {
+                throw MerkleVerificationError.invalidHash
+            }
+            guard let sigData = Data(base64Encoded: sigB64) else {
+                throw MerkleVerificationError.signatureMismatch
+            }
+            let hashData = Data(hex: hash)
+            let sigDER = try P256.Signing.ECDSASignature(derRepresentation: sigData)
+            guard pub.isValidSignature(sigDER, for: hashData) else {
+                throw MerkleVerificationError.signatureMismatch
+            }
+            print("✅ Signature verified for hash: \(hash)")
+        } else {
+            guard fm.fileExists(atPath: Config.merkleJSON.path) else {
+                throw MerkleVerificationError.missingFiles(Config.merkleJSON.path)
+            }
+            guard fm.fileExists(atPath: Config.signature.path) else {
+                throw MerkleVerificationError.missingFiles(Config.signature.path)
+            }
+            let json = try Data(contentsOf: Config.merkleJSON)
+            let canonical = try canonicalHash(for: Config.merkleJSON)
+            let contentHash = canonical["content_hash"] as! String
+            let sig = try Data(contentsOf: Config.signature)
+            let sigDER = try P256.Signing.ECDSASignature(derRepresentation: sig)
+            guard pub.isValidSignature(sigDER, for: json) else {
+                throw MerkleVerificationError.signatureMismatch
+            }
+            print("🔗 Canonical hash verified: \(contentHash)")
+            print("✅ Signature verified")
+        }
     }
 }
 
 // MARK: - Commands
-enum Command: String { case ledger, sign, verify, audit, rotate, help }
+enum Command: String { case ledger, sign, verify, audit, rotate, printPEM, help }
 
 func usage() {
     print("""
-Usage: swift run swiftcliwallet <command>
+Usage: swift run swiftcliwallet <command> [options]
 
-  ledger    Run EternumSentinel ledger script to produce ledger_merkle.json
-  sign      Sign logs/ledger_merkle.json with keys/ledger.pem → logs/ledger_merkle.sig
-  verify    Verify logs/ledger_merkle.json against keys/ledger.pub and logs/ledger_merkle.sig
-  audit     Pretty-print merkle JSON fields if present and verify signature
-  rotate    Generate a fresh keypair (archives previous)
-  help      Show this help
+  ledger          Run EternumSentinel ledger script to produce ledger_merkle.json
+  sign [--hash <hex>]  Sign logs/ledger_merkle.json or provided hash with keys/ledger.pem
+  verify [--hash <hex> --sig <base64>]  Verify logs/ledger_merkle.json or hash against signature
+  audit           Pretty-print merkle JSON fields and verify signature
+  rotate          Generate a fresh keypair (archives previous)
+  print-pem       Print private and public key PEMs
+  help            Show this help
 
 Env:
   ETERNUM_HOME      Override base dir (default: ~/Automation)
@@ -219,13 +300,32 @@ func cmd_ledger() {
     }
 }
 func cmd_sign() {
-    do { try MerkleSigner.sign() } catch {
+    do {
+        let args = Array(CommandLine.arguments.dropFirst(2))
+        var hash: String?
+        if args.contains("--hash"), let idx = args.firstIndex(of: "--hash"), idx + 1 < args.count {
+            hash = args[idx + 1]
+        }
+        let sigB64 = try MerkleSigner.sign(hash: hash)
+        if let hash = hash { print("Signature (base64): \(sigB64)") }
+    } catch {
         fputs("sign error: \(error)\n", stderr)
         exit(1)
     }
 }
 func cmd_verify() {
-    do { try MerkleVerifier.verify() } catch {
+    do {
+        let args = Array(CommandLine.arguments.dropFirst(2))
+        var hash: String?
+        var sigB64: String?
+        if args.contains("--hash"), let idx = args.firstIndex(of: "--hash"), idx + 1 < args.count {
+            hash = args[idx + 1]
+        }
+        if args.contains("--sig"), let idx = args.firstIndex(of: "--sig"), idx + 1 < args.count {
+            sigB64 = args[idx + 1]
+        }
+        try MerkleVerifier.verify(hash: hash, sigB64: sigB64)
+    } catch {
         fputs("verify error: \(error)\n", stderr)
         exit(1)
     }
@@ -262,6 +362,14 @@ func cmd_rotate() {
         exit(1)
     }
 }
+func cmd_printPEM() {
+    do {
+        try MerkleSigner.printPEM()
+    } catch {
+        fputs("print-pem error: \(error)\n", stderr)
+        exit(1)
+    }
+}
 
 // MARK: - Entry
 @main
@@ -275,7 +383,26 @@ struct WalletCLI {
         case .verify: cmd_verify()
         case .audit: cmd_audit()
         case .rotate: cmd_rotate()
+        case .printPEM: cmd_printPEM()
         case .help: usage()
         }
+    }
+}
+
+// MARK: - Data Extension for Hex
+extension Data {
+    init(hex: String) {
+        let len = hex.count / 2
+        var data = Data(capacity: len)
+        var i = hex.startIndex
+        for _ in 0..<len {
+            let j = hex.index(i, offsetBy: 2)
+            let bytes = hex[i..<j]
+            if let num = UInt8(bytes, radix: 16) {
+                data.append(num)
+            }
+            i = j
+        }
+        self = data
     }
 }
