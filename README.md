@@ -1,14 +1,14 @@
-🛡 Eternum CLI Wallet
+Eternum CLI Wallet:
 
 A lightweight command-line tool for Merkle ledger management and cryptographic verification in the Eternum ecosystem.
 
 Quick Reference: see COMMANDS.md
 
-🚀 Usage
+USAGE:
 swift run swiftcliwallet <command>
 
 ⚡ Commands
-Command
+
 Description
 ledger
 Run the EternumSentinel script to produce ledger_merkle.json.
